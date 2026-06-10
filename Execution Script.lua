@@ -37,7 +37,7 @@ globalEnv().FastSpawn = false
 
 -- 5. Repository and Workspace Configuration
 local owner = "SteineImGarten"
-local repo = "Vortex"
+local repo = "Vortex-2.0"
 local branch = "main"
 
 -- Auto-detect local path in executor workspace folder
