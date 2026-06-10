@@ -160,6 +160,8 @@ function Main.Start()
     
     Vortex.Signals.FrameworkLoaded:Fire()
     print("[Vortex] Framework fully loaded and features initialized successfully!")
+
+    setthreadidentity(8)
 end
 
 return Main
