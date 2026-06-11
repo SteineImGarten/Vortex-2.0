@@ -2,15 +2,9 @@
     Vortex Addon - Continuous Defibrillator (Zero-Delay Mode)
     Dual Operation: Hooks FireServer via exact native format and triggers automatically under 15 HP.
 ]]
-local globalEnv = getgenv or function() return _G end
--- 1. Grab the running framework from the environment cache
-local Vortex = globalEnv()._VortexCoreInstance
-if not Vortex then
-    warn("[Defib Addon] Vortex core engine instance is not running! Make sure to run the main framework loader first.")
-    return
-end
--- 2. Define the Defibrillator Addon module structure
+
 local DefibContinuous = {}
+
 function DefibContinuous.Init(VortexInstance)
     local Players = game:GetService("Players")
     local LocalPlayer = Players.LocalPlayer
