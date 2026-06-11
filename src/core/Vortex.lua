@@ -399,7 +399,7 @@ function Vortex.Hook(ModuleKey, FunctionName, HookID, HookFunc, Config)
         HookTable[HookID].Config = Config
         HookTable[HookID].Priority = Config.Priority or 0
         HookTable[HookID].Active = true
-        return Vortex._InternalStorage.Originals[StorageKey]
+        return Vortex._InternalStorage.Originals[StorageKey] or OrigFunc
     end
 
     HookTable[HookID] = {
@@ -427,43 +427,59 @@ function Vortex.Hook(ModuleKey, FunctionName, HookID, HookFunc, Config)
 
     local LastSpyPrintTime = {}
 
-    local function GetActiveHook()
-        local best
+    local function GetSortedActiveHooks()
+        local active = {}
         for _, hook in pairs(HookTable) do
             if hook.Active then
-                if not best or hook.Priority > best.Priority then
-                    best = hook
-                end
+                table.insert(active, hook)
             end
         end
-        return best
+        table.sort(active, function(a, b)
+            return a.Priority > b.Priority
+        end)
+        return active
     end
 
     local function Wrapper(...)
-        local HookData = GetActiveHook()
+        local activeHooks = GetSortedActiveHooks()
         local baseFunc = Vortex._InternalStorage.Originals[StorageKey] or OrigFunc
         
-        if not HookData then
+        if #activeHooks == 0 then
             return baseFunc(...)
         end
 
-        local CFG = HookData.Config or {}
-        local HookFn = HookData.Func
-        local key = StorageKey .. "." .. HookData.HookID
-
-        if CFG.Spy then
-            local now = tick()
-            local delay = CFG.SpyDelay or 0
-            LastSpyPrintTime[key] = LastSpyPrintTime[key] or 0
-
-            if now - LastSpyPrintTime[key] >= delay then
-                LastSpyPrintTime[key] = now
-                print(("--- Spy Hook: %s -> %s [ID=%s] ---"):format(ModuleKey, FunctionName, HookData.HookID))
-                PrintArgs({...})
+        local function executePipeline(index, ...)
+            local currentHook = activeHooks[index]
+            
+            if not currentHook then
+                return baseFunc(...)
             end
+
+            local CFG = currentHook.Config or {}
+            local HookFn = currentHook.Func
+            local key = StorageKey .. "." .. currentHook.HookID
+
+            if CFG.Spy then
+                local now = tick()
+                local delay = CFG.SpyDelay or 0
+                LastSpyPrintTime[key] = LastSpyPrintTime[key] or 0
+
+                if now - LastSpyPrintTime[key] >= delay then
+                    LastSpyPrintTime[key] = now
+                    print(("--- Spy Hook: %s -> %s [ID=%s] ---"):format(ModuleKey, FunctionName, currentHook.HookID))
+                    PrintArgs({...})
+                end
+            end
+
+            local function nextInChain(...)
+                return executePipeline(index + 1, ...)
+            end
+
+            local result = SafeCall(HookFn, nextInChain, ...)
+            return result
         end
 
-        return SafeCall(HookFn, baseFunc, ...)
+        return executePipeline(1, ...)
     end
 
     if oth and oth.hook and IsCClosureFunc(OrigFunc) then
