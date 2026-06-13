@@ -177,11 +177,14 @@ local function FormatValue(Value, Depth, Seen)
         if Seen[Value] then return "<cycle>" end
         Seen[Value] = true
         local Parts = {}
+        
         local IsArray = true
         local MaxIndex = 0
+        local KeyCount = 0
         
         for k, _ in pairs(Value) do
-            if type(k) ~= "number" then
+            KeyCount = KeyCount + 1
+            if type(k) ~= "number" or k <= 0 or math.floor(k) ~= k then
                 IsArray = false
                 break
             else
@@ -189,7 +192,7 @@ local function FormatValue(Value, Depth, Seen)
             end
         end
         
-        if IsArray and MaxIndex > 0 then
+        if IsArray and MaxIndex > 0 and (MaxIndex - KeyCount) < 50 then
             table.insert(Parts, "[")
             for i = 1, MaxIndex do
                 local v = Value[i]
@@ -200,7 +203,14 @@ local function FormatValue(Value, Depth, Seen)
         else
             table.insert(Parts, "{")
             for k, v in pairs(Value) do
-                local KeySTR = tostring(k)
+                local KeySTR
+                if type(k) == "string" and k:match("^[%a_][%w_]*$") then
+                    KeySTR = k
+                else
+                    local FormattedKey = type(k) == "string" and ("\"%s\""):format(k) or tostring(k)
+                    KeySTR = ("[%s]"):format(FormattedKey)
+                end
+                
                 local ValSTR = FormatValue(v, Depth + 1, Seen)
                 table.insert(Parts, ("\n%s  %s = %s,"):format(Indent, KeySTR, ValSTR))
             end
@@ -212,23 +222,28 @@ local function FormatValue(Value, Depth, Seen)
     end
 end
 
-local function PrintArgs(Args)
-    for i = 1, #Args do
-        local v = Args[i]
+local function PrintArgs(PackedArgs)
+    local Count = PackedArgs.n or #PackedArgs
+    if Count == 0 then
+        print("[Vortex] Args: none")
+        return
+    end
+    for i = 1, Count do
+        local v = PackedArgs[i]
         local t = typeof(v)
-        if t == "table" then
-            print(("[Vortex] Arg%d (table): %s"):format(i, FormatValue(v, 0, {})))
-        else
-            print(("[Vortex] Arg%d (%s): %s"):format(i, t, FormatValue(v)))
-        end
+        print(("[Vortex] Arg%d (%s): %s"):format(i, t, FormatValue(v, 0, {})))
     end
 end
 
-local function PrintReturn(Ret)
-    if typeof(Ret) == "table" then
-        print(("[Vortex] Return: %s"):format(FormatValue(Ret, 0, {})))
-    else
-        print(("[Vortex] Return: %s"):format(FormatValue(Ret)))
+local function PrintReturns(PackedReturns)
+    local Count = PackedReturns.n or #PackedReturns
+    if Count == 0 then
+        print("[Vortex] Return: void")
+        return
+    end
+    for i = 1, Count do
+        local v = PackedReturns[i]
+        print(("[Vortex] Return%d (%s): %s"):format(i, typeof(v), FormatValue(v, 0, {})))
     end
 end
 
@@ -252,7 +267,7 @@ local function WrapWithSpy(ModuleKey, Mod, FuncName)
         if SpyEnabled and (now - lastPrint >= (SpyConfig.Delay or 0)) then
             lastPrint = now
             print(("=== [SPY] %s -> %s ==="):format(ModuleKey, FuncName))
-            PrintArgs({...})
+            PrintArgs(table.pack(...))
         end
 
         local results
@@ -263,7 +278,7 @@ local function WrapWithSpy(ModuleKey, Mod, FuncName)
         end
 
         if SpyEnabled and SpyConfig.LogReturns then
-            PrintReturn(results.n == 1 and results[1] or results)
+            PrintReturns(results)
         end
 
         return table.unpack(results, 1, results.n)
@@ -367,6 +382,15 @@ function Vortex.Call(ModuleKey, FunctionName, ...)
     return Func(table.unpack(Args))
 end
 
+local function SafeCall(Func, ...)
+    local results = table.pack(pcall(Func, ...))
+    if not results[1] then
+        warn(("[Vortex] Hook Error: %s"):format(tostring(results[2])))
+        return nil
+    end
+    return table.unpack(results, 2, results.n)
+end
+
 function Vortex.Hook(ModuleKey, FunctionName, HookID, HookFunc, Config)
     if type(HookFunc) ~= "function" and type(HookID) == "function" then
         HookFunc, Config = HookID, HookFunc
@@ -389,18 +413,14 @@ function Vortex.Hook(ModuleKey, FunctionName, HookID, HookFunc, Config)
     end
 
     Vortex._HookRegistry[ModuleKey] = Vortex._HookRegistry[ModuleKey] or {}
-    Vortex._HookRegistry[ModuleKey][FunctionName] = Vortex._HookRegistry[ModuleKey][FunctionName] or {}
+    Vortex._HookRegistry[ModuleKey][FunctionName] = Vortex._HookRegistry[ModuleKey][FunctionName] or {
+        Hooks = {},
+        Sorted = {}
+    }
 
-    local HookTable = Vortex._HookRegistry[ModuleKey][FunctionName]
+    local RegistryEntry = Vortex._HookRegistry[ModuleKey][FunctionName]
+    local HookTable = RegistryEntry.Hooks
     local StorageKey = ModuleKey .. "." .. FunctionName
-
-    if HookTable[HookID] then
-        HookTable[HookID].Func = HookFunc
-        HookTable[HookID].Config = Config
-        HookTable[HookID].Priority = Config.Priority or 0
-        HookTable[HookID].Active = true
-        return Vortex._InternalStorage.Originals[StorageKey] or OrigFunc
-    end
 
     HookTable[HookID] = {
         HookID = HookID,
@@ -410,38 +430,28 @@ function Vortex.Hook(ModuleKey, FunctionName, HookID, HookFunc, Config)
         Priority = Config.Priority or 0
     }
 
-    if Vortex._InternalStorage.Wrapped[StorageKey] then
-        return Vortex._InternalStorage.Originals[StorageKey]
-    end
-
-    Vortex._InternalStorage.Wrapped[StorageKey] = true
-
-    local function SafeCall(Func, ...)
-        local ok, result = pcall(Func, ...)
-        if not ok then
-            warn(("[Vortex] Hook Error: %s"):format(tostring(result)))
-            return nil
-        end
-        return result
-    end
-
-    local LastSpyPrintTime = {}
-
-    local function GetSortedActiveHooks()
+    local function RebuildSortedCache()
         local active = {}
         for _, hook in pairs(HookTable) do
             if hook.Active then
                 table.insert(active, hook)
             end
         end
-        table.sort(active, function(a, b)
-            return a.Priority > b.Priority
-        end)
-        return active
+        table.sort(active, function(a, b) return a.Priority > b.Priority end)
+        RegistryEntry.Sorted = active
+    end
+    RebuildSortedCache()
+
+    if Vortex._InternalStorage.Wrapped[StorageKey] then
+        return Vortex._InternalStorage.Originals[StorageKey] or OrigFunc
     end
 
+    Vortex._InternalStorage.Wrapped[StorageKey] = true
+
+    local LastSpyPrintTime = {}
+
     local function Wrapper(...)
-        local activeHooks = GetSortedActiveHooks()
+        local activeHooks = RegistryEntry.Sorted
         local baseFunc = Vortex._InternalStorage.Originals[StorageKey] or OrigFunc
         
         if #activeHooks == 0 then
@@ -467,7 +477,7 @@ function Vortex.Hook(ModuleKey, FunctionName, HookID, HookFunc, Config)
                 if now - LastSpyPrintTime[key] >= delay then
                     LastSpyPrintTime[key] = now
                     print(("--- Spy Hook: %s -> %s [ID=%s] ---"):format(ModuleKey, FunctionName, currentHook.HookID))
-                    PrintArgs({...})
+                    PrintArgs(table.pack(...)) 
                 end
             end
 
@@ -475,11 +485,24 @@ function Vortex.Hook(ModuleKey, FunctionName, HookID, HookFunc, Config)
                 return executePipeline(index + 1, ...)
             end
 
-            local result = SafeCall(HookFn, nextInChain, ...)
-            return result
+            return SafeCall(HookFn, nextInChain, ...)
         end
 
-        return executePipeline(1, ...)
+        local finalResults = table.pack(executePipeline(1, ...))
+
+        local firstHook = activeHooks[1]
+        if firstHook and firstHook.Config and firstHook.Config.Spy then
+            local key = StorageKey .. "." .. firstHook.HookID
+            local now = tick()
+            local delay = firstHook.Config.SpyDelay or 0
+            
+            if now - (LastSpyPrintTime[key] or 0) >= delay then
+                PrintReturns(finalResults) 
+                print(("--- End Spy Hook: %s -> %s ---"):format(ModuleKey, FunctionName))
+            end
+        end
+
+        return table.unpack(finalResults, 1, finalResults.n)
     end
 
     if oth and oth.hook and IsCClosureFunc(OrigFunc) then
