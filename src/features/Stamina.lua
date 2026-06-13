@@ -9,7 +9,7 @@ function Stamina.Init(Vortex)
     local LastStamina = nil
     local LastCheckTime = 0
 
-    Vortex.Hook("@DefaultStaminaHandlerClient", "getDefaultStamina", "DefiAuto", function(Original, ...)
+    Vortex.Hook("@DefaultStaminaHandlerClient", "getDefaultStamina", "Stamina", function(Original, ...)
             
         local StaminaTable = Original(...)
 
