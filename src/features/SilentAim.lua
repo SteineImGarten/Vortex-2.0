@@ -10,13 +10,14 @@ function SilentAim.Init(Vortex)
     local LocalPlayer = Players.LocalPlayer
     local globalEnv = getgenv or function() return _G end
 
+    -- Bind key listener to log silent aim state changes
     Vortex.Signals.FeatureToggled:Connect(function(featureName, state)
         if featureName == "SilentAim" then
             print("[SilentAim] Toggled State:", state)
         end
     end)
 
-Vortex.Hook(
+    Vortex.Hook(
         "@RangedWeaponHandler",
         "calculateFireDirection",
         "SilentAim",
@@ -25,6 +26,7 @@ Vortex.Hook(
             local Args = { ... }
 
             if typeof(Args[1]) == "CFrame" and globalEnv().SilentAim then
+                -- Reconstruct MetaData using the working Vortex upvalue pattern
                 if not MetaData and typeof(Ranged) == "Instance" and Ranged:IsA("Tool") then
                     local ItemId = Ranged:GetAttribute("ItemId")
                     if Vortex and ItemId then
@@ -38,21 +40,8 @@ Vortex.Hook(
                     local GravityValue = MetaData.gravity
                     local Character = LocalPlayer.Character
                     
-                    local Origin = Args[1].Position
-                    local OriginSource = "Incoming CFrame"
-
-                    if not Origin and typeof(Ranged) == "Instance" and Ranged:IsA("Tool") then
-                        local ToolPart = Ranged:FindFirstChild("Handle") or Ranged:FindFirstChildWhichIsA("BasePart")
-                        if ToolPart then
-                            Origin = ToolPart.Position
-                            OriginSource = "Tool Part (" .. ToolPart.Name .. ")"
-                        end
-                    end
-
-                    if not Origin and Character and Character:FindFirstChild("HumanoidRootPart") then
-                        Origin = Character.HumanoidRootPart.Position
-                        OriginSource = "HumanoidRootPart Fallback"
-                    end
+                    -- REVERTED ORIGIN SOURCE: Direct HumanoidRootPart indexing
+                    local Origin = Character and Character:FindFirstChild("HumanoidRootPart") and Character.HumanoidRootPart.Position
 
                     if Origin and Speed then
                         local Target = Vortex.MouseTarget(nil, globalEnv().FOV)
@@ -84,14 +73,17 @@ Vortex.Hook(
         { Spy = false }
     )
 
+    -- Hook Ranged Weapon Reload Handler
     Vortex.Hook(
         "@RangedWeaponClient",
         "cancelReload",
         "SilentAimCancel",
         function(Original, ...)
             if globalEnv().NoReloadCancel then
+                -- Bypass reload cancel (stop call)
                 return
             end
+            -- Forward execution to original handler if NoReloadCancel is false
             return Original(...)
         end,
         { Spy = false }
