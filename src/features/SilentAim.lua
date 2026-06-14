@@ -17,7 +17,7 @@ function SilentAim.Init(Vortex)
         end
     end)
 
-    VortexInstance.Hook(
+    Vortex.Hook(
         "@RangedWeaponHandler",
         "calculateFireDirection",
         "SilentAim",
