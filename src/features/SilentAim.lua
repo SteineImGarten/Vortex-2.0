@@ -17,40 +17,67 @@ function SilentAim.Init(Vortex)
         end
     end)
 
-    -- Hook Ranged Weapon Fire Direction
-    Vortex.Hook(
+    VortexInstance.Hook(
         "@RangedWeaponHandler",
         "calculateFireDirection",
         "SilentAim",
         function(Original, ...)
-            local Ranged, MetaData = Vortex.RangedWeapon()
+            local Ranged, MetaData = VortexInstance.RangedWeapon()
             local Args = { ... }
 
             if typeof(Args[1]) == "CFrame" and globalEnv().SilentAim then
-                if MetaData and MetaData._itemConfig then
-                    local Speed = MetaData._itemConfig.speed
-                    local Gravity = MetaData._itemConfig.gravity
-                    local Origin = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and LocalPlayer.Character.HumanoidRootPart.Position
+                -- Reconstruct MetaData using the working Vortex upvalue pattern
+                if not MetaData and typeof(Ranged) == "Instance" and Ranged:IsA("Tool") then
+                    local ItemId = Ranged:GetAttribute("ItemId")
+                    if Vortex and ItemId then
+                        local WeaponMeta = Vortex.Get("WeaponMetadata")
+                        MetaData = WeaponMeta and WeaponMeta[ItemId]
+                    end
+                end
 
-                    if Origin then
-                        -- Query closest target inside screen FOV
-                        local Target = Vortex.MouseTarget(nil, globalEnv().FOV)
+                if MetaData then
+                    local Speed = MetaData.speed
+                    local GravityValue = MetaData.gravity
+                    local Character = LocalPlayer.Character
+                    
+                    local Origin = Args[1].Position
+                    local OriginSource = "Incoming CFrame"
+
+                    if not Origin and typeof(Ranged) == "Instance" and Ranged:IsA("Tool") then
+                        local ToolPart = Ranged:FindFirstChild("Handle") or Ranged:FindFirstChildWhichIsA("BasePart")
+                        if ToolPart then
+                            Origin = ToolPart.Position
+                            OriginSource = "Tool Part (" .. ToolPart.Name .. ")"
+                        end
+                    end
+
+                    if not Origin and Character and Character:FindFirstChild("HumanoidRootPart") then
+                        Origin = Character.HumanoidRootPart.Position
+                        OriginSource = "HumanoidRootPart Fallback"
+                    end
+
+                    if Origin and Speed then
+                        local Target = VortexInstance.MouseTarget(nil, globalEnv().FOV)
                         if Target and Target.Character then
                             local TargetPartName = globalEnv().HitPart or "HumanoidRootPart"
                             local TargetPart = Target.Character:FindFirstChild(TargetPartName)
                             
                             if TargetPart then
-                                -- Project Aim Vector using Kalman physics prediction integrated in Vortex
-                                Args[1] = Vortex.Predict(
+                                local FinalGravity = typeof(GravityValue) == "Vector3" and GravityValue or Vector3.new(0, 0, 0)
+                                
+                                local OldCFrame = Args[1]
+                                Args[1] = VortexInstance.Predict(
                                     TargetPart,
                                     Origin,
                                     Speed,
                                     false,
-                                    Vector3.new(0, 0, 0) -- Vertical Gravity force vector
+                                    FinalGravity
                                 )
                             end
                         end
                     end
+                else
+                    warn("[SilentAim DEBUG] Critical: MetaData structural lookup failed completely.")
                 end
             end
 
